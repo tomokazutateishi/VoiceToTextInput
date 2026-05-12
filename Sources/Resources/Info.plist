@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.voicetotextinput.app</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>音声をテキストに変換するためにマイクへのアクセスが必要です。カーソル位置に文字を入力します。</string>
+    <key>NSSpeechRecognitionUsageDescription</key>
+    <string>音声認識により、話した内容をテキストに変換してカーソル位置に入力します。</string>
+</dict>
+</plist>
