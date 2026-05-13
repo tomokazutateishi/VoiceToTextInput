@@ -1,6 +1,7 @@
 import Foundation
 import Speech
 import AVFoundation
+import CoreAudio
 
 /// リアルタイム音声認識サービス（macOS Speech Framework）
 @MainActor
@@ -26,6 +27,88 @@ final class SpeechRecognitionService: NSObject, ObservableObject {
     private var recognitionTask: SFSpeechRecognitionTask?
     private var speechRecognizer: SFSpeechRecognizer?
     private let locale: Locale
+
+    private func setupAudioSession() throws {
+        // macOS では AVAudioSession.setPreferredInput が効かないため
+        // Core Audio で直接デフォルト入力デバイスを組み込みマイクに切り替える
+        try selectBuiltInMicAsDefaultInput()
+    }
+
+    /// Core Audio API で組み込みマイクをデフォルト入力デバイスに設定
+    /// macOS では機器セット（aggregate device）が選ばれていても、これで強制的に組み込みマイクへ切り替える
+    private func selectBuiltInMicAsDefaultInput() throws {
+        // 1. 全入力デバイスのリストを取得
+        var devicesPropertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var devicesSize: UInt32 = 0
+        var status = AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject),
+            &devicesPropertyAddress,
+            0, nil,
+            &devicesSize
+        )
+        guard status == noErr else { return }
+
+        let deviceCount = Int(devicesSize) / MemoryLayout<AudioDeviceID>.size
+        var deviceIDs = [AudioDeviceID](repeating: 0, count: deviceCount)
+        status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &devicesPropertyAddress,
+            0, nil,
+            &devicesSize,
+            &deviceIDs
+        )
+        guard status == noErr else { return }
+
+        // 2. 組み込みマイクを探す（TransportType = .builtIn かつ入力ストリームを持つ）
+        var builtInMicID: AudioDeviceID?
+        for deviceID in deviceIDs {
+            // 入力ストリームを持つか確認
+            var streamAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyStreams,
+                mScope: kAudioDevicePropertyScopeInput,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var streamSize: UInt32 = 0
+            guard AudioObjectGetPropertyDataSize(deviceID, &streamAddress, 0, nil, &streamSize) == noErr,
+                  streamSize > 0 else { continue }
+
+            // TransportType を確認
+            var transportAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyTransportType,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var transportType: UInt32 = 0
+            var transportSize = UInt32(MemoryLayout<UInt32>.size)
+            guard AudioObjectGetPropertyData(deviceID, &transportAddress, 0, nil, &transportSize, &transportType) == noErr else { continue }
+
+            if transportType == kAudioDeviceTransportTypeBuiltIn {
+                builtInMicID = deviceID
+                break
+            }
+        }
+
+        guard let micID = builtInMicID else { return }
+
+        // 3. デフォルト入力デバイスに設定
+        var defaultInputAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var micIDVar = micID
+        AudioObjectSetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &defaultInputAddress,
+            0, nil,
+            UInt32(MemoryLayout<AudioDeviceID>.size),
+            &micIDVar
+        )
+    }
 
     var displayText: String {
         let p = partialText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -98,6 +181,8 @@ final class SpeechRecognitionService: NSObject, ObservableObject {
             throw SpeechError.recognizerUnavailable
         }
         guard !isRecording else { return }
+
+        try setupAudioSession()
 
         transcribedText = ""
         partialText = ""
